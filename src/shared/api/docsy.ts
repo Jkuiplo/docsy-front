@@ -75,7 +75,11 @@ export const documentsApi = {
     payload: { title: string; content: string; templateId?: string; placeholders?: Record<string, string> },
   ) =>
     data<DocumentItem>(apiClient.post(`/workspaces/${workspaceId}/documents`, payload)),
-  update: (workspaceId: string, documentId: string, payload: { title: string; content: string }) =>
+  update: (
+    workspaceId: string,
+    documentId: string,
+    payload: { title: string; content: string; placeholders?: Record<string, string> },
+  ) =>
     data<DocumentItem>(apiClient.patch(`/workspaces/${workspaceId}/documents/${documentId}`, payload)),
   versions: (workspaceId: string, documentId: string) =>
     data<DocumentVersion[]>(apiClient.get(`/workspaces/${workspaceId}/documents/${documentId}/versions`)),

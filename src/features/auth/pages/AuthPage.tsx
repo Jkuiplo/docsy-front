@@ -7,12 +7,14 @@ import {
   TeamOutlined,
   UserOutlined,
 } from '@ant-design/icons';
-import { useMutation } from '@tanstack/react-query';
+import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { Alert, Button, Card, Form, Input, Segmented, Space, Typography, message } from 'antd';
-import { Navigate, useNavigate } from 'react-router-dom';
+import { useEffect } from 'react';
+import { Navigate, useNavigate, useSearchParams } from 'react-router-dom';
 import { ThemeModeControl } from '../../../app/theme';
 import { getApiErrorMessage } from '../../../shared/api/axios';
 import { authApi } from '../../../shared/api/docsy';
+import { acceptPendingInvitation, setPendingInvitationToken } from '../../../shared/invitations';
 import { useAuthStore } from '../store';
 
 const { Title, Text, Paragraph } = Typography;
@@ -29,29 +31,63 @@ interface RegisterValues extends LoginValues {
   positionTitle: string;
 }
 
+interface AuthFormValues extends RegisterValues {
+  mode: AuthMode;
+}
+
 export const AuthPage = () => {
-  const [form] = Form.useForm<LoginValues & RegisterValues>();
+  const [form] = Form.useForm<AuthFormValues>();
   const navigate = useNavigate();
+  const [params] = useSearchParams();
+  const queryClient = useQueryClient();
   const token = useAuthStore((state) => state.token);
   const setSession = useAuthStore((state) => state.setSession);
   const mode = Form.useWatch('mode', form) as AuthMode | undefined;
   const currentMode = mode ?? 'login';
+  const requestedMode = params.get('mode') === 'register' ? 'register' : 'login';
+  const invitationToken = params.get('invitationToken');
+
+  useEffect(() => {
+    if (invitationToken) {
+      setPendingInvitationToken(invitationToken);
+      form.setFieldValue('mode', 'register');
+      return;
+    }
+
+    form.setFieldValue('mode', requestedMode);
+  }, [form, invitationToken, requestedMode]);
+
+  const afterAuth = async (response: Awaited<ReturnType<typeof authApi.login>>) => {
+    setSession(response.token, response.user);
+
+    if (!response.user.emailVerified) {
+      navigate('/verify-needed', { replace: true });
+      return;
+    }
+
+    try {
+      const acceptedInvitation = await acceptPendingInvitation();
+
+      if (acceptedInvitation) {
+        message.success('Invitation accepted');
+        queryClient.invalidateQueries({ queryKey: ['workspaces'] });
+      }
+    } catch (error) {
+      message.error(getApiErrorMessage(error));
+    }
+
+    navigate('/', { replace: true });
+  };
 
   const loginMutation = useMutation({
     mutationFn: authApi.login,
-    onSuccess: (response) => {
-      setSession(response.token, response.user);
-      navigate(response.user.emailVerified ? '/' : '/verify-needed', { replace: true });
-    },
+    onSuccess: afterAuth,
     onError: (error) => message.error(getApiErrorMessage(error)),
   });
 
   const registerMutation = useMutation({
     mutationFn: authApi.register,
-    onSuccess: (response) => {
-      setSession(response.token, response.user);
-      navigate(response.user.emailVerified ? '/' : '/verify-needed', { replace: true });
-    },
+    onSuccess: afterAuth,
     onError: (error) => message.error(getApiErrorMessage(error)),
   });
 
@@ -59,7 +95,7 @@ export const AuthPage = () => {
     return <Navigate to="/" replace />;
   }
 
-  const onFinish = (values: LoginValues & RegisterValues) => {
+  const onFinish = (values: AuthFormValues) => {
     if (currentMode === 'login') {
       loginMutation.mutate({ email: values.email, password: values.password });
       return;
@@ -122,7 +158,7 @@ export const AuthPage = () => {
 
         <Card className="auth-panel" bordered={false}>
           <Space direction="vertical" size={24} className="full-width">
-            <div>
+            <div className="auth-mode-copy" key={currentMode}>
               <Text className="auth-eyebrow">Workspace access</Text>
               <Title level={2}>{currentMode === 'login' ? 'Welcome back' : 'Create your Docsy account'}</Title>
               <Text type="secondary">
@@ -136,7 +172,7 @@ export const AuthPage = () => {
               form={form}
               layout="vertical"
               requiredMark={false}
-              initialValues={{ mode: 'login' }}
+              initialValues={{ mode: requestedMode }}
               onFinish={onFinish}
             >
               <Form.Item name="mode">
@@ -149,7 +185,7 @@ export const AuthPage = () => {
                 />
               </Form.Item>
 
-              <div className="auth-form-fields" key={currentMode}>
+              <div className="auth-form-fields" data-mode={currentMode}>
                 <Form.Item
                   label="Email"
                   name="email"
@@ -158,25 +194,35 @@ export const AuthPage = () => {
                   <Input size="large" prefix={<MailOutlined />} autoComplete="email" />
                 </Form.Item>
 
-                {currentMode === 'register' && (
-                  <>
+                <div className={`auth-register-fields ${currentMode === 'register' ? 'is-open' : ''}`} aria-hidden={currentMode !== 'register'}>
+                  <div className="auth-register-fields-inner">
                     <Form.Item
                       label="Full name"
                       name="fullName"
-                      rules={[{ required: true, message: 'Enter your full name' }]}
+                      rules={currentMode === 'register' ? [{ required: true, message: 'Enter your full name' }] : []}
                     >
-                      <Input size="large" prefix={<UserOutlined />} autoComplete="name" />
+                      <Input
+                        size="large"
+                        prefix={<UserOutlined />}
+                        autoComplete="name"
+                        disabled={currentMode !== 'register'}
+                      />
                     </Form.Item>
 
                     <Form.Item
                       label="Position title"
                       name="positionTitle"
-                      rules={[{ required: true, message: 'Enter your position title' }]}
+                      rules={currentMode === 'register' ? [{ required: true, message: 'Enter your position title' }] : []}
                     >
-                      <Input size="large" prefix={<TeamOutlined />} autoComplete="organization-title" />
+                      <Input
+                        size="large"
+                        prefix={<TeamOutlined />}
+                        autoComplete="organization-title"
+                        disabled={currentMode !== 'register'}
+                      />
                     </Form.Item>
-                  </>
-                )}
+                  </div>
+                </div>
 
                 <Form.Item
                   label="Password"
@@ -190,14 +236,16 @@ export const AuthPage = () => {
                   />
                 </Form.Item>
 
-                {currentMode === 'register' && (
-                  <Alert
-                    showIcon
-                    type="info"
-                    className="form-note"
-                    message="You may need to verify your email before using workspaces."
-                  />
-                )}
+                <div className={`auth-register-note ${currentMode === 'register' ? 'is-open' : ''}`} aria-hidden={currentMode !== 'register'}>
+                  <div>
+                    <Alert
+                      showIcon
+                      type="info"
+                      className="form-note"
+                      message="You may need to verify your email before using workspaces."
+                    />
+                  </div>
+                </div>
               </div>
 
               <Button

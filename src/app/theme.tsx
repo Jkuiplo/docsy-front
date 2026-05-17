@@ -26,6 +26,7 @@ export const AppThemeProvider = ({ children }: { children: ReactNode }) => {
   const [mode, setModeState] = useState<ThemeMode>(getStoredMode);
   const [systemTheme, setSystemTheme] = useState<'light' | 'dark'>(getSystemTheme);
   const activeTheme = mode === 'system' ? systemTheme : mode;
+  const isDark = activeTheme === 'dark';
 
   useEffect(() => {
     const mediaQuery = window.matchMedia?.('(prefers-color-scheme: dark)');
@@ -60,16 +61,31 @@ export const AppThemeProvider = ({ children }: { children: ReactNode }) => {
     <ThemeContext.Provider value={value}>
       <ConfigProvider
         theme={{
-          algorithm: activeTheme === 'dark' ? theme.darkAlgorithm : theme.defaultAlgorithm,
+          algorithm: isDark ? theme.darkAlgorithm : theme.defaultAlgorithm,
           token: {
-            colorPrimary: '#2f6fed',
+            colorPrimary: isDark ? '#7aa7ff' : '#2f6fed',
+            colorBgBase: isDark ? '#151b26' : '#f4f6fb',
+            colorBgContainer: isDark ? '#202838' : '#ffffff',
+            colorBgElevated: isDark ? '#242d3f' : '#ffffff',
+            colorBgLayout: isDark ? '#151b26' : '#f4f6fb',
+            colorBorder: isDark ? '#344055' : '#dfe5ef',
+            colorBorderSecondary: isDark ? '#2b3548' : '#edf1f7',
+            colorText: isDark ? '#edf2fb' : '#152033',
+            colorTextSecondary: isDark ? '#b8c2d2' : '#667085',
             borderRadius: 8,
             fontFamily:
               "Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif",
           },
           components: {
             Card: {
+              colorBgContainer: isDark ? '#202838' : '#ffffff',
               borderRadiusLG: 10,
+            },
+            Table: {
+              colorBgContainer: isDark ? '#202838' : '#ffffff',
+              headerBg: isDark ? '#263146' : '#f8fafd',
+              headerColor: isDark ? '#edf2fb' : '#152033',
+              rowHoverBg: isDark ? '#2a354a' : '#f8fafd',
             },
             Layout: {
               bodyBg: 'transparent',

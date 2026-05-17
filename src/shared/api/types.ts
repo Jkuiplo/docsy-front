@@ -1,7 +1,7 @@
 export type Role = 'OWNER' | 'ADMIN' | 'REVIEWER' | 'USER';
 export type DocumentStatus = 'DRAFT' | 'ON_REVIEW' | 'APPROVED' | 'ARCHIVED' | 'REJECTED';
 export type InvitationStatus = 'PENDING' | 'ACCEPTED' | 'EXPIRED' | 'REVOKED';
-export type JoinMode = 'INVITE_ONLY' | 'PASSWORD' | 'OPEN';
+export type JoinMode = 'INVITE_ONLY' | 'PASSWORD_AND_INVITE';
 export type Permission =
   | 'MANAGE_MEMBERS'
   | 'CREATE_TEMPLATES'
@@ -59,6 +59,7 @@ export interface Template {
   id: string;
   title: string;
   htmlContent: string;
+  content?: string;
   createdAt: string;
   updatedAt: string;
 }
@@ -67,12 +68,19 @@ export interface DocumentItem {
   id: string;
   title: string;
   content: string;
+  templateId?: string | null;
+  templateSourceHtml?: string | null;
   templateSnapshotHtml: string;
+  placeholderKeys?: string[] | null;
+  placeholders?: Record<string, string> | null;
   status: DocumentStatus;
   authorId: string;
   authorName: string;
   reviewerId?: string | null;
   reviewerName?: string | null;
+  submitComment?: string | null;
+  rejectionReason?: string | null;
+  approvalComment?: string | null;
   updatedAt: string;
 }
 
@@ -92,6 +100,7 @@ export interface ReviewQueueItem {
   authorId: string;
   authorName: string;
   status: DocumentStatus;
+  submitComment?: string | null;
   updatedAt: string;
 }
 

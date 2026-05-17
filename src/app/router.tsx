@@ -35,6 +35,10 @@ export const router = createBrowserRouter([
     element: <AcceptInvitationPage />,
   },
   {
+    path: '/join',
+    element: <AcceptInvitationPage />,
+  },
+  {
     path: '/',
     element: <ProtectedLayout />,
     children: [

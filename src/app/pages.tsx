@@ -35,7 +35,7 @@ import {
   message,
 } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import ReactQuill from 'react-quill-new';
 import 'react-quill-new/dist/quill.snow.css';
 import { Link, Navigate, useNavigate, useParams, useSearchParams } from 'react-router-dom';
@@ -62,6 +62,11 @@ import type {
   Template,
 } from '../shared/api/types';
 import { formatDate } from '../shared/format';
+import {
+  clearPendingInvitationToken,
+  getPendingInvitationToken,
+  setPendingInvitationToken,
+} from '../shared/invitations';
 import { EmptyState, ErrorState, InlineError, LoadingState, PageHeader } from '../shared/ui';
 import { useAuthStore } from '../features/auth/store';
 import {
@@ -75,7 +80,8 @@ import {
 import { useWorkspaceStore } from './workspaceStore';
 
 const roles: Role[] = ['OWNER', 'ADMIN', 'REVIEWER', 'USER'];
-const joinModes: JoinMode[] = ['INVITE_ONLY', 'PASSWORD', 'OPEN'];
+const joinModes: JoinMode[] = ['INVITE_ONLY', 'PASSWORD_AND_INVITE'];
+const passwordJoinMode: JoinMode = 'PASSWORD_AND_INVITE';
 const editableStatuses: DocumentStatus[] = ['DRAFT', 'REJECTED'];
 
 const statusColors: Record<DocumentStatus, string> = {
@@ -89,8 +95,11 @@ const statusColors: Record<DocumentStatus, string> = {
 const statusTag = (status: DocumentStatus) => <Tag color={statusColors[status]}>{status.replace('_', ' ')}</Tag>;
 
 const roleSelectOptions = roles.map((role) => ({ value: role, label: role }));
-const joinModeOptions = joinModes.map((joinMode) => ({ value: joinMode, label: joinMode.replace('_', ' ') }));
-const placeholderPattern = /{([A-Za-z][A-Za-z0-9_ -]*)}/g;
+const joinModeOptions = joinModes.map((joinMode) => ({
+  value: joinMode,
+  label: joinMode === passwordJoinMode ? 'Password' : 'Invite only',
+}));
+const placeholderPattern = /{([^{}\n]+)}/g;
 
 const useWorkspaceId = () => {
   const { workspaceId } = useParams();
@@ -104,21 +113,86 @@ const useWorkspaceId = () => {
 
 const notifyError = (error: unknown) => message.error(getApiErrorMessage(error));
 
+const workspaceAccessPayload = (values: { name: string; joinMode: JoinMode; joinPassword?: string }) => {
+  if (values.joinMode !== passwordJoinMode) {
+    return { name: values.name, joinMode: values.joinMode };
+  }
+
+  return values;
+};
+
 const getTemplatePlaceholders = (html: string) =>
   Array.from(new Set(Array.from(html.matchAll(placeholderPattern), (match) => match[1].trim()).filter(Boolean)));
 
-const isBlankHtml = (html: string) => html.replace(/<[^>]*>/g, '').replace(/&nbsp;/g, '').trim().length === 0;
+const getTemplateHtml = (template: Template) => template.htmlContent || template.content || '';
 
-const documentPreviewHtml = (document: DocumentItem) => {
-  if (!document.templateSnapshotHtml) {
-    return document.content;
+const getDocumentEditorHtml = (document: DocumentItem) => document.templateSourceHtml || document.content || '';
+
+const getDocumentPlaceholderKeys = (document: DocumentItem) =>
+  document.placeholderKeys?.length
+    ? document.placeholderKeys
+    : getTemplatePlaceholders(document.templateSourceHtml ?? '');
+
+const hasReviewMetadata = (document: DocumentItem) =>
+  Boolean(document.submitComment || document.rejectionReason || document.approvalComment);
+
+const documentCreatePayload = (
+  values: { title: string; templateId?: string; placeholders?: Record<string, string> },
+  content: string,
+) => {
+  const placeholders = Object.fromEntries(
+    Object.entries(values.placeholders ?? {}).filter(([, value]) => value.trim().length > 0),
+  );
+  const payload: {
+    title: string;
+    content: string;
+    templateId?: string;
+    placeholders?: Record<string, string>;
+  } = {
+    title: values.title,
+    content,
+  };
+
+  if (values.templateId) {
+    payload.templateId = values.templateId;
   }
 
-  if (!document.content || isBlankHtml(document.content)) {
+  if (Object.keys(placeholders).length > 0) {
+    payload.placeholders = placeholders;
+  }
+
+  return payload;
+};
+
+const documentUpdatePayload = (
+  values: { title: string; placeholders?: Record<string, string> },
+  content: string,
+) => {
+  const placeholders = Object.fromEntries(
+    Object.entries(values.placeholders ?? {}).filter(([, value]) => value.trim().length > 0),
+  );
+  const payload: {
+    title: string;
+    content: string;
+    placeholders?: Record<string, string>;
+  } = {
+    title: values.title,
+    content,
+  };
+
+  if (Object.keys(placeholders).length > 0) {
+    payload.placeholders = placeholders;
+  }
+
+  return payload;
+};
+
+const documentPreviewHtml = (document: DocumentItem) => {
+  if (document.templateSnapshotHtml) {
     return document.templateSnapshotHtml;
   }
 
-  return `${document.templateSnapshotHtml}<div class="document-page-break"></div>${document.content}`;
+  return document.content;
 };
 
 export const HomeRedirect = () => {
@@ -142,6 +216,7 @@ export const HomeRedirect = () => {
 export const WorkspaceSetupPage = () => {
   const [createForm] = Form.useForm();
   const [joinForm] = Form.useForm();
+  const createJoinMode = Form.useWatch('joinMode', createForm) ?? 'INVITE_ONLY';
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const setSelectedWorkspaceId = useWorkspaceStore((state) => state.setSelectedWorkspaceId);
@@ -153,7 +228,8 @@ export const WorkspaceSetupPage = () => {
   };
 
   const createMutation = useMutation({
-    mutationFn: workspacesApi.create,
+    mutationFn: (values: { name: string; joinMode: JoinMode; joinPassword?: string }) =>
+      workspacesApi.create(workspaceAccessPayload(values)),
     onSuccess: (workspace) => afterWorkspace(workspace.id),
     onError: notifyError,
   });
@@ -182,9 +258,11 @@ export const WorkspaceSetupPage = () => {
               <Form.Item name="joinMode" label="Join mode" rules={[{ required: true }]}>
                 <Select options={joinModeOptions} />
               </Form.Item>
-              <Form.Item name="joinPassword" label="Join password">
-                <Input.Password />
-              </Form.Item>
+              {createJoinMode === passwordJoinMode && (
+                <Form.Item name="joinPassword" label="Join password" rules={[{ required: true }]}>
+                  <Input.Password autoComplete="new-password" />
+                </Form.Item>
+              )}
               <Button type="primary" htmlType="submit" loading={createMutation.isPending}>
                 Create workspace
               </Button>
@@ -195,10 +273,10 @@ export const WorkspaceSetupPage = () => {
           <Card title="Join workspace">
             <Form form={joinForm} layout="vertical" onFinish={(values) => joinMutation.mutate(values)}>
               <Form.Item name="joinCode" label="Join code" rules={[{ required: true }]}>
-                <Input />
+                <Input autoComplete="off" />
               </Form.Item>
               <Form.Item name="joinPassword" label="Join password">
-                <Input.Password />
+                <Input.Password autoComplete="new-password" />
               </Form.Item>
               <Button type="primary" htmlType="submit" loading={joinMutation.isPending}>
                 Join workspace
@@ -339,7 +417,7 @@ export const DocumentCreatePage = () => {
   });
   const createMutation = useMutation({
     mutationFn: (values: { title: string; templateId?: string; placeholders?: Record<string, string> }) =>
-      documentsApi.create(workspaceId, { ...values, content }),
+      documentsApi.create(workspaceId, documentCreatePayload(values, content)),
     onSuccess: (document) => {
       message.success('Document created');
       navigate(`../documents/${document.id}`);
@@ -397,6 +475,10 @@ export const DocumentDetailPage = () => {
     queryFn: () => membersApi.list(workspaceId),
   });
 
+  useEffect(() => {
+    setContent(documentQuery.data ? getDocumentEditorHtml(documentQuery.data) : '');
+  }, [documentId, documentQuery.data?.id]);
+
   const invalidateDocument = () => {
     queryClient.invalidateQueries({ queryKey: ['workspaces', workspaceId, 'documents'] });
     queryClient.invalidateQueries({ queryKey: ['workspaces', workspaceId, 'documents', documentId] });
@@ -405,7 +487,8 @@ export const DocumentDetailPage = () => {
   };
 
   const updateMutation = useMutation({
-    mutationFn: (values: { title: string }) => documentsApi.update(workspaceId, documentId, { ...values, content }),
+    mutationFn: (values: { title: string; placeholders?: Record<string, string> }) =>
+      documentsApi.update(workspaceId, documentId, documentUpdatePayload(values, content)),
     onSuccess: () => {
       message.success('Document saved');
       invalidateDocument();
@@ -471,6 +554,21 @@ export const DocumentDetailPage = () => {
         subtitle={`${document.authorName} • updated ${formatDate(document.updatedAt)}`}
         action={<Space>{statusTag(document.status)}</Space>}
       />
+      {hasReviewMetadata(document) && (
+        <Card className="review-notes" bordered={false}>
+          <Descriptions bordered column={1} size="small">
+            {document.submitComment && (
+              <Descriptions.Item label="Submit comment">{document.submitComment}</Descriptions.Item>
+            )}
+            {document.rejectionReason && (
+              <Descriptions.Item label="Rejection reason">{document.rejectionReason}</Descriptions.Item>
+            )}
+            {document.approvalComment && (
+              <Descriptions.Item label="Approval comment">{document.approvalComment}</Descriptions.Item>
+            )}
+          </Descriptions>
+        </Card>
+      )}
       <Tabs
         items={[
           {
@@ -488,11 +586,14 @@ export const DocumentDetailPage = () => {
                 )}
                 <DocumentEditorForm
                   initialTitle={document.title}
-                  content={content || document.content}
+                  content={content}
                   onContentChange={setContent}
                   onFinish={updateMutation.mutate}
                   loading={updateMutation.isPending}
                   submitLabel="Save changes"
+                  templateSnapshotHtml={document.templateSnapshotHtml}
+                  existingPlaceholderKeys={getDocumentPlaceholderKeys(document)}
+                  existingPlaceholders={document.placeholders ?? undefined}
                   disabled={!canEdit}
                 />
                 <Divider />
@@ -600,6 +701,9 @@ const DocumentEditorForm = ({
   loading,
   submitLabel,
   includeTemplate,
+  templateSnapshotHtml,
+  existingPlaceholderKeys,
+  existingPlaceholders,
   disabled,
 }: {
   initialTitle?: string;
@@ -611,12 +715,25 @@ const DocumentEditorForm = ({
   loading: boolean;
   submitLabel: string;
   includeTemplate?: boolean;
+  templateSnapshotHtml?: string;
+  existingPlaceholderKeys?: string[];
+  existingPlaceholders?: Record<string, string>;
   disabled?: boolean;
 }) => {
   const [form] = Form.useForm();
   const templateId = Form.useWatch('templateId', form);
   const selectedTemplate = (templates ?? []).find((template) => template.id === templateId);
-  const placeholders = selectedTemplate ? getTemplatePlaceholders(selectedTemplate.htmlContent) : [];
+  const placeholders = selectedTemplate ? getTemplatePlaceholders(getTemplateHtml(selectedTemplate)) : [];
+
+  useEffect(() => {
+    form.setFieldValue('placeholders', undefined);
+  }, [form, templateId]);
+
+  useEffect(() => {
+    if (existingPlaceholders) {
+      form.setFieldValue('placeholders', existingPlaceholders);
+    }
+  }, [existingPlaceholders, form]);
 
   return (
     <Form form={form} layout="vertical" initialValues={{ title: initialTitle }} onFinish={onFinish}>
@@ -654,6 +771,29 @@ const DocumentEditorForm = ({
             </div>
           )}
         </>
+      )}
+      {templateSnapshotHtml && (
+        <Form.Item label="Template snapshot">
+          <div
+            className="document-preview document-template-snapshot"
+            dangerouslySetInnerHTML={{ __html: templateSnapshotHtml }}
+          />
+        </Form.Item>
+      )}
+      {existingPlaceholderKeys && existingPlaceholderKeys.length > 0 && (
+        <div className="placeholder-panel form-note">
+          <Typography.Title level={5}>Document placeholders</Typography.Title>
+          {existingPlaceholderKeys.map((placeholder) => (
+            <Form.Item
+              key={placeholder}
+              name={['placeholders', placeholder]}
+              label={`{${placeholder}}`}
+              rules={[{ required: true, message: `Fill {${placeholder}}` }]}
+            >
+              <Input disabled={disabled} />
+            </Form.Item>
+          ))}
+        </div>
       )}
       <Form.Item label={includeTemplate ? 'Additional page content' : 'Content'} required={!includeTemplate}>
         <ReactQuill readOnly={disabled} theme="snow" value={content} onChange={onContentChange} />
@@ -737,7 +877,7 @@ export const TemplatesPage = () => {
 
   const openEditor = (template?: Template) => {
     setEditing(template ?? null);
-    setHtmlContent(template?.htmlContent ?? '');
+    setHtmlContent(template ? getTemplateHtml(template) : '');
     form.setFieldsValue({ title: template?.title });
     setDrawerOpen(true);
   };
@@ -820,6 +960,7 @@ export const ReviewQueuePage = () => {
             { title: 'Title', dataIndex: 'title', render: (title, row) => <Link to={`../documents/${row.documentId}`}>{title}</Link> },
             { title: 'Status', dataIndex: 'status', render: statusTag },
             { title: 'Author', dataIndex: 'authorName' },
+            { title: 'Submit comment', dataIndex: 'submitComment', render: (value) => value || 'No comment' },
             { title: 'Updated', dataIndex: 'updatedAt', render: formatDate },
           ]}
         />
@@ -1047,6 +1188,8 @@ export const AuditPage = () => {
 
 export const WorkspaceSettingsPage = () => {
   const workspaceId = useWorkspaceId();
+  const [form] = Form.useForm();
+  const watchedJoinMode = Form.useWatch('joinMode', form);
   const queryClient = useQueryClient();
   const workspaceQuery = useQuery({
     queryKey: ['workspaces', workspaceId],
@@ -1054,7 +1197,7 @@ export const WorkspaceSettingsPage = () => {
   });
   const updateMutation = useMutation({
     mutationFn: (values: { name: string; joinMode: JoinMode; joinPassword?: string }) =>
-      workspacesApi.update(workspaceId, values),
+      workspacesApi.update(workspaceId, workspaceAccessPayload(values)),
     onSuccess: () => {
       message.success('Workspace updated');
       queryClient.invalidateQueries({ queryKey: ['workspaces'] });
@@ -1076,11 +1219,14 @@ export const WorkspaceSettingsPage = () => {
     return <EmptyState description="Workspace is not available" />;
   }
 
+  const joinMode = watchedJoinMode ?? workspace.joinMode;
+
   return (
     <>
       <PageHeader title="Workspace settings" subtitle="Update workspace access settings." />
       <Card>
         <Form
+          form={form}
           layout="vertical"
           initialValues={workspace}
           onFinish={(values) => updateMutation.mutate(values)}
@@ -1097,9 +1243,11 @@ export const WorkspaceSettingsPage = () => {
           <Form.Item name="joinMode" label="Join mode" rules={[{ required: true }]}>
             <Select options={joinModeOptions} />
           </Form.Item>
-          <Form.Item name="joinPassword" label="Join password">
-            <Input.Password />
-          </Form.Item>
+          {joinMode === passwordJoinMode && (
+            <Form.Item name="joinPassword" label="Join password" rules={[{ required: true }]}>
+              <Input.Password autoComplete="new-password" />
+            </Form.Item>
+          )}
           <Button type="primary" htmlType="submit" loading={updateMutation.isPending}>
             Save workspace
           </Button>
@@ -1228,23 +1376,54 @@ export const VerifyNeededPage = () => {
 export const VerifyEmailPage = () => {
   const [params] = useSearchParams();
   const token = params.get('token') ?? '';
+  const sessionToken = useAuthStore((state) => state.token);
+  const setUser = useAuthStore((state) => state.setUser);
+  const pendingInvitationToken = getPendingInvitationToken();
   const verifyQuery = useQuery({
     queryKey: ['verify-email', token],
     queryFn: () => authApi.verifyEmail(token),
     enabled: Boolean(token),
     retry: false,
   });
+  const meQuery = useQuery({
+    queryKey: ['auth', 'me'],
+    queryFn: authApi.me,
+    enabled: Boolean(sessionToken) && verifyQuery.isSuccess,
+    retry: false,
+  });
+  const acceptQuery = useQuery({
+    queryKey: ['accept-invitation', pendingInvitationToken],
+    queryFn: () => invitationsApi.accept(pendingInvitationToken ?? ''),
+    enabled: Boolean(sessionToken) && Boolean(pendingInvitationToken) && verifyQuery.isSuccess,
+    retry: false,
+  });
+
+  useEffect(() => {
+    if (meQuery.data) {
+      setUser(meQuery.data);
+    }
+  }, [meQuery.data, setUser]);
+
+  useEffect(() => {
+    if (acceptQuery.isSuccess) {
+      clearPendingInvitationToken();
+    }
+  }, [acceptQuery.isSuccess]);
 
   if (!token) {
     return <ResultPage status="warning" title="Verification token is missing" link="/auth" />;
   }
 
-  if (verifyQuery.isLoading) {
+  if (verifyQuery.isLoading || meQuery.isLoading || acceptQuery.isLoading) {
     return <LoadingState label="Verifying email" />;
   }
 
   if (verifyQuery.isError) {
     return <ResultPage status="error" title={getApiErrorMessage(verifyQuery.error)} link="/auth" />;
+  }
+
+  if (acceptQuery.isError) {
+    return <ResultPage status="error" title={getApiErrorMessage(acceptQuery.error)} link="/" />;
   }
 
   return <ResultPage status="success" title="Email verified" link="/" />;
@@ -1253,15 +1432,58 @@ export const VerifyEmailPage = () => {
 export const AcceptInvitationPage = () => {
   const [params] = useSearchParams();
   const token = params.get('token') ?? '';
+  const sessionToken = useAuthStore((state) => state.token);
+  const user = useAuthStore((state) => state.user);
+  const setUser = useAuthStore((state) => state.setUser);
+  const queryClient = useQueryClient();
+  const meQuery = useQuery({
+    queryKey: ['auth', 'me'],
+    queryFn: authApi.me,
+    enabled: Boolean(sessionToken) && !user,
+    retry: false,
+  });
+  const activeUser = user ?? meQuery.data;
   const acceptQuery = useQuery({
     queryKey: ['accept-invitation', token],
     queryFn: () => invitationsApi.accept(token),
-    enabled: Boolean(token),
+    enabled: Boolean(token) && Boolean(sessionToken) && Boolean(activeUser?.emailVerified),
     retry: false,
   });
 
+  useEffect(() => {
+    if (meQuery.data) {
+      setUser(meQuery.data);
+    }
+  }, [meQuery.data, setUser]);
+
+  useEffect(() => {
+    if (acceptQuery.isSuccess) {
+      clearPendingInvitationToken();
+      queryClient.invalidateQueries({ queryKey: ['workspaces'] });
+    }
+  }, [acceptQuery.isSuccess, queryClient]);
+
   if (!token) {
     return <ResultPage status="warning" title="Invitation token is missing" link="/" />;
+  }
+
+  if (!sessionToken) {
+    setPendingInvitationToken(token);
+    return <Navigate to={`/auth?mode=register&invitationToken=${encodeURIComponent(token)}`} replace />;
+  }
+
+  if (meQuery.isLoading) {
+    return <LoadingState label="Checking account" />;
+  }
+
+  if (meQuery.isError) {
+    setPendingInvitationToken(token);
+    return <Navigate to={`/auth?mode=register&invitationToken=${encodeURIComponent(token)}`} replace />;
+  }
+
+  if (!activeUser?.emailVerified) {
+    setPendingInvitationToken(token);
+    return <Navigate to="/verify-needed" replace />;
   }
 
   if (acceptQuery.isLoading) {
