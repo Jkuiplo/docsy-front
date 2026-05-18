@@ -26,9 +26,6 @@ export const authApi = {
   register: (payload: { email: string; password: string; fullName: string; positionTitle: string }) =>
     data<AuthResponse>(apiClient.post('/auth/register', payload)),
   me: () => data<User>(apiClient.get('/auth/me')),
-  verifyEmail: (token: string) => data<void>(apiClient.post('/auth/verify-email', { token })),
-  resendVerification: (email: string) =>
-    data<void>(apiClient.post('/auth/resend-verification', { email })),
 };
 
 export const usersApi = {
@@ -100,7 +97,9 @@ export const invitationsApi = {
     data<Invitation[]>(apiClient.get(`/workspaces/${workspaceId}/invitations`)),
   create: (workspaceId: string, payload: { email: string; role: Role }) =>
     data<Invitation>(apiClient.post(`/workspaces/${workspaceId}/invitations`, payload)),
-  accept: (token: string) => data<void>(apiClient.post('/invitations/accept', { token })),
+  mine: () => data<Invitation[]>(apiClient.get('/invitations/my')),
+  accept: (invitationId: string) => data<void>(apiClient.post(`/invitations/${invitationId}/accept`)),
+  decline: (invitationId: string) => data<void>(apiClient.post(`/invitations/${invitationId}/decline`)),
 };
 
 export const membersApi = {

@@ -38,11 +38,10 @@ import type { ColumnsType } from 'antd/es/table';
 import { useEffect, useMemo, useState } from 'react';
 import ReactQuill from 'react-quill-new';
 import 'react-quill-new/dist/quill.snow.css';
-import { Link, Navigate, useNavigate, useParams, useSearchParams } from 'react-router-dom';
+import { Link, Navigate, useNavigate, useParams } from 'react-router-dom';
 import { getApiErrorMessage } from '../shared/api/axios';
 import {
   auditApi,
-  authApi,
   documentsApi,
   invitationsApi,
   membersApi,
@@ -54,6 +53,7 @@ import {
 import type {
   DocumentItem,
   DocumentStatus,
+  Invitation,
   JoinMode,
   Member,
   Permission,
@@ -62,11 +62,6 @@ import type {
   Template,
 } from '../shared/api/types';
 import { formatDate } from '../shared/format';
-import {
-  clearPendingInvitationToken,
-  getPendingInvitationToken,
-  setPendingInvitationToken,
-} from '../shared/invitations';
 import { EmptyState, ErrorState, InlineError, LoadingState, PageHeader } from '../shared/ui';
 import { useAuthStore } from '../features/auth/store';
 import {
@@ -243,6 +238,7 @@ export const WorkspaceSetupPage = () => {
   return (
     <>
       <PageHeader title="Start with a workspace" subtitle="Create a company workspace or join one with a code." />
+      <MyInvitationsPanel />
       <Row gutter={[16, 16]}>
         <Col xs={24} lg={12}>
           <Card title="Create workspace">
@@ -286,6 +282,87 @@ export const WorkspaceSetupPage = () => {
         </Col>
       </Row>
     </>
+  );
+};
+
+const MyInvitationsPanel = () => {
+  const navigate = useNavigate();
+  const queryClient = useQueryClient();
+  const setSelectedWorkspaceId = useWorkspaceStore((state) => state.setSelectedWorkspaceId);
+  const invitationsQuery = useQuery({
+    queryKey: ['invitations', 'my'],
+    queryFn: invitationsApi.mine,
+  });
+  const pendingInvitations = (invitationsQuery.data ?? []).filter((invitation) => invitation.status === 'PENDING');
+
+  const acceptMutation = useMutation({
+    mutationFn: (invitation: Invitation) => invitationsApi.accept(invitation.id).then(() => invitation),
+    onSuccess: (invitation) => {
+      message.success('Invitation accepted');
+      queryClient.invalidateQueries({ queryKey: ['invitations', 'my'] });
+      queryClient.invalidateQueries({ queryKey: ['workspaces', 'my'] });
+
+      if (invitation.workspaceId) {
+        setSelectedWorkspaceId(invitation.workspaceId);
+        navigate(`/workspaces/${invitation.workspaceId}`);
+      }
+    },
+    onError: notifyError,
+  });
+
+  const declineMutation = useMutation({
+    mutationFn: (invitationId: string) => invitationsApi.decline(invitationId),
+    onSuccess: () => {
+      message.success('Invitation declined');
+      queryClient.invalidateQueries({ queryKey: ['invitations', 'my'] });
+    },
+    onError: notifyError,
+  });
+
+  if (invitationsQuery.isError) {
+    return <InlineError error={invitationsQuery.error} />;
+  }
+
+  if (!invitationsQuery.isLoading && pendingInvitations.length === 0) {
+    return null;
+  }
+
+  return (
+    <Card title="Pending invitations" className="setup-invitations">
+      {invitationsQuery.isLoading ? (
+        <LoadingState label="Loading invitations" />
+      ) : (
+        <Space direction="vertical" className="full-width" size={12}>
+          {pendingInvitations.map((invitation) => (
+            <div className="invitation-item" key={invitation.id}>
+              <div>
+                <Typography.Title level={5}>{invitation.workspaceName ?? 'Workspace invitation'}</Typography.Title>
+                <Typography.Text type="secondary">
+                  Invited by {invitation.invitedByName ?? invitation.invitedByEmail ?? 'workspace admin'} as {invitation.role}
+                  {' '}· expires {formatDate(invitation.expiresAt)}
+                </Typography.Text>
+              </div>
+              <Space>
+                <Button
+                  type="primary"
+                  loading={acceptMutation.isPending}
+                  onClick={() => acceptMutation.mutate(invitation)}
+                >
+                  Accept
+                </Button>
+                <Button
+                  danger
+                  loading={declineMutation.isPending}
+                  onClick={() => declineMutation.mutate(invitation.id)}
+                >
+                  Decline
+                </Button>
+              </Space>
+            </div>
+          ))}
+        </Space>
+      )}
+    </Card>
   );
 };
 
@@ -1032,7 +1109,7 @@ export const MembersPage = () => {
   const inviteMutation = useMutation({
     mutationFn: (values: { email: string; role: Role }) => invitationsApi.create(workspaceId, values),
     onSuccess: () => {
-      message.success('Invitation sent');
+      message.success('Invitation created');
       queryClient.invalidateQueries({ queryKey: ['workspaces', workspaceId, 'invitations'] });
     },
     onError: notifyError,
@@ -1040,7 +1117,7 @@ export const MembersPage = () => {
 
   return (
     <>
-      <PageHeader title="Members" subtitle="Manage workspace users and invitations." />
+      <PageHeader title="Members" subtitle="Manage workspace users and in-app invitations." />
       <Row gutter={[16, 16]}>
         <Col xs={24} xl={16}>
           <Card title="Members">
@@ -1078,6 +1155,12 @@ export const MembersPage = () => {
         <Col xs={24} xl={8}>
           <Card title="Invite">
             <Form layout="vertical" initialValues={{ role: 'USER' }} onFinish={(values) => inviteMutation.mutate(values)}>
+              <Alert
+                showIcon
+                type="info"
+                className="form-note"
+                message="The invitation will appear inside the account registered with this email."
+              />
               <Form.Item name="email" label="Email" rules={[{ required: true, type: 'email' }]}>
                 <Input prefix={<MailOutlined />} />
               </Form.Item>
@@ -1085,7 +1168,7 @@ export const MembersPage = () => {
                 <Select options={roleSelectOptions} />
               </Form.Item>
               <Button type="primary" htmlType="submit" loading={inviteMutation.isPending}>
-                Send invitation
+                Create invitation
               </Button>
             </Form>
           </Card>
@@ -1341,161 +1424,33 @@ export const ProfilePage = () => {
 };
 
 export const VerifyNeededPage = () => {
-  const user = useAuthStore((state) => state.user);
-  const resendMutation = useMutation({
-    mutationFn: () => authApi.resendVerification(user?.email ?? ''),
-    onSuccess: () => message.success('Verification email sent'),
-    onError: notifyError,
-  });
-
   return (
     <div className="verify-shell">
       <Card className="verify-card" bordered={false}>
         <Space direction="vertical" size={20} className="full-width">
-          <div className="verify-icon"><MailOutlined /></div>
+          <div className="verify-icon"><CheckCircleOutlined /></div>
           <div>
-            <Typography.Title level={2}>Verify your email</Typography.Title>
+            <Typography.Title level={2}>Email verification is no longer required</Typography.Title>
             <Typography.Text type="secondary">
-              Check {user?.email ?? 'your inbox'} for a verification link before continuing into workspaces.
+              Your account is ready. Workspace invitations now appear inside Docsy.
             </Typography.Text>
           </div>
-          <Alert
-            showIcon
-            type="info"
-            message="The account menu stays available here for profile, theme, and log out controls."
-          />
-          <Button type="primary" loading={resendMutation.isPending} onClick={() => resendMutation.mutate()}>
-            Resend verification email
-          </Button>
+          <Link to="/">
+            <Button type="primary">Continue</Button>
+          </Link>
         </Space>
       </Card>
     </div>
   );
 };
 
-export const VerifyEmailPage = () => {
-  const [params] = useSearchParams();
-  const token = params.get('token') ?? '';
-  const sessionToken = useAuthStore((state) => state.token);
-  const setUser = useAuthStore((state) => state.setUser);
-  const pendingInvitationToken = getPendingInvitationToken();
-  const verifyQuery = useQuery({
-    queryKey: ['verify-email', token],
-    queryFn: () => authApi.verifyEmail(token),
-    enabled: Boolean(token),
-    retry: false,
-  });
-  const meQuery = useQuery({
-    queryKey: ['auth', 'me'],
-    queryFn: authApi.me,
-    enabled: Boolean(sessionToken) && verifyQuery.isSuccess,
-    retry: false,
-  });
-  const acceptQuery = useQuery({
-    queryKey: ['accept-invitation', pendingInvitationToken],
-    queryFn: () => invitationsApi.accept(pendingInvitationToken ?? ''),
-    enabled: Boolean(sessionToken) && Boolean(pendingInvitationToken) && verifyQuery.isSuccess,
-    retry: false,
-  });
+export const VerifyEmailPage = () => (
+  <ResultPage status="success" title="Email verification is no longer required" link="/" />
+);
 
-  useEffect(() => {
-    if (meQuery.data) {
-      setUser(meQuery.data);
-    }
-  }, [meQuery.data, setUser]);
-
-  useEffect(() => {
-    if (acceptQuery.isSuccess) {
-      clearPendingInvitationToken();
-    }
-  }, [acceptQuery.isSuccess]);
-
-  if (!token) {
-    return <ResultPage status="warning" title="Verification token is missing" link="/auth" />;
-  }
-
-  if (verifyQuery.isLoading || meQuery.isLoading || acceptQuery.isLoading) {
-    return <LoadingState label="Verifying email" />;
-  }
-
-  if (verifyQuery.isError) {
-    return <ResultPage status="error" title={getApiErrorMessage(verifyQuery.error)} link="/auth" />;
-  }
-
-  if (acceptQuery.isError) {
-    return <ResultPage status="error" title={getApiErrorMessage(acceptQuery.error)} link="/" />;
-  }
-
-  return <ResultPage status="success" title="Email verified" link="/" />;
-};
-
-export const AcceptInvitationPage = () => {
-  const [params] = useSearchParams();
-  const token = params.get('token') ?? '';
-  const sessionToken = useAuthStore((state) => state.token);
-  const user = useAuthStore((state) => state.user);
-  const setUser = useAuthStore((state) => state.setUser);
-  const queryClient = useQueryClient();
-  const meQuery = useQuery({
-    queryKey: ['auth', 'me'],
-    queryFn: authApi.me,
-    enabled: Boolean(sessionToken) && !user,
-    retry: false,
-  });
-  const activeUser = user ?? meQuery.data;
-  const acceptQuery = useQuery({
-    queryKey: ['accept-invitation', token],
-    queryFn: () => invitationsApi.accept(token),
-    enabled: Boolean(token) && Boolean(sessionToken) && Boolean(activeUser?.emailVerified),
-    retry: false,
-  });
-
-  useEffect(() => {
-    if (meQuery.data) {
-      setUser(meQuery.data);
-    }
-  }, [meQuery.data, setUser]);
-
-  useEffect(() => {
-    if (acceptQuery.isSuccess) {
-      clearPendingInvitationToken();
-      queryClient.invalidateQueries({ queryKey: ['workspaces'] });
-    }
-  }, [acceptQuery.isSuccess, queryClient]);
-
-  if (!token) {
-    return <ResultPage status="warning" title="Invitation token is missing" link="/" />;
-  }
-
-  if (!sessionToken) {
-    setPendingInvitationToken(token);
-    return <Navigate to={`/auth?mode=register&invitationToken=${encodeURIComponent(token)}`} replace />;
-  }
-
-  if (meQuery.isLoading) {
-    return <LoadingState label="Checking account" />;
-  }
-
-  if (meQuery.isError) {
-    setPendingInvitationToken(token);
-    return <Navigate to={`/auth?mode=register&invitationToken=${encodeURIComponent(token)}`} replace />;
-  }
-
-  if (!activeUser?.emailVerified) {
-    setPendingInvitationToken(token);
-    return <Navigate to="/verify-needed" replace />;
-  }
-
-  if (acceptQuery.isLoading) {
-    return <LoadingState label="Accepting invitation" />;
-  }
-
-  if (acceptQuery.isError) {
-    return <ResultPage status="error" title={getApiErrorMessage(acceptQuery.error)} link="/" />;
-  }
-
-  return <ResultPage status="success" title="Invitation accepted" link="/" />;
-};
+export const AcceptInvitationPage = () => (
+  <ResultPage status="warning" title="Invitation links are deprecated. Open Docsy to view in-app invitations." link="/setup" />
+);
 
 const ResultPage = ({ status, title, link }: { status: 'success' | 'warning' | 'error'; title: string; link: string }) => (
   <main className="auth-page">

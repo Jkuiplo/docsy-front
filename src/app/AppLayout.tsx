@@ -125,14 +125,10 @@ const WorkspaceShell = () => {
   const [isMobile, setIsMobile] = useState(false);
   const selectedWorkspaceId = useWorkspaceStore((state) => state.selectedWorkspaceId);
   const setSelectedWorkspaceId = useWorkspaceStore((state) => state.setSelectedWorkspaceId);
-  const isVerifyRoute = location.pathname === '/verify-needed';
-  const isProfileRoute = location.pathname === '/profile';
-  const emailVerified = user?.emailVerified ?? false;
 
   const workspacesQuery = useQuery({
     queryKey: ['workspaces', 'my'],
     queryFn: workspacesApi.mine,
-    enabled: emailVerified,
   });
   const workspaces = workspacesQuery.data ?? [];
   const currentWorkspaceId = params.workspaceId ?? selectedWorkspaceId ?? workspaces[0]?.id;
@@ -151,33 +147,29 @@ const WorkspaceShell = () => {
     localStorage.setItem(sidebarStorageKey, String(sidebarCollapsed));
   }, [sidebarCollapsed]);
 
-  if (!emailVerified && !isVerifyRoute && !isProfileRoute) {
-    return <Navigate to="/verify-needed" replace />;
-  }
-
-  if (emailVerified && isVerifyRoute) {
+  if (location.pathname === '/verify-needed') {
     return <Navigate to="/" replace />;
   }
 
-  if (emailVerified && workspacesQuery.isLoading) {
+  if (workspacesQuery.isLoading) {
     return <LoadingState label="Loading workspaces" />;
   }
 
-  if (emailVerified && workspacesQuery.isError) {
+  if (workspacesQuery.isError) {
     return <ErrorState error={workspacesQuery.error} onRetry={() => workspacesQuery.refetch()} />;
   }
 
-  if (emailVerified && location.pathname === '/' && workspaces.length > 0 && currentWorkspaceId) {
+  if (location.pathname === '/' && workspaces.length > 0 && currentWorkspaceId) {
     return <Navigate to={`/workspaces/${currentWorkspaceId}`} replace />;
   }
 
-  if (emailVerified && location.pathname === '/' && workspaces.length === 0) {
+  if (location.pathname === '/' && workspaces.length === 0) {
     return <Navigate to="/setup" replace />;
   }
 
   const selectedWorkspace = workspaces.find((workspace) => workspace.id === currentWorkspaceId);
   const menuItems = selectedWorkspace ? workspaceMenuItems(selectedWorkspace.id, myPermissionsQuery.data) : [];
-  const showSidebar = emailVerified;
+  const showSidebar = true;
 
   const onWorkspaceChange = (workspaceId: string) => {
     setSelectedWorkspaceId(workspaceId);
@@ -253,22 +245,17 @@ const WorkspaceShell = () => {
                 onClick={() => setSidebarCollapsed((collapsed) => !collapsed)}
               />
             )}
-            {emailVerified && (
-              <>
-                <Select
-                  className="workspace-select"
-                  placeholder="Select workspace"
-                  value={selectedWorkspace?.id}
-                  onChange={onWorkspaceChange}
-                  options={workspaces.map((workspace: Workspace) => ({
-                    value: workspace.id,
-                    label: workspace.name,
-                  }))}
-                />
-                <Button onClick={() => navigate('/setup')}>New or join</Button>
-              </>
-            )}
-            {!emailVerified && <Text strong>Finish setting up your account</Text>}
+            <Select
+              className="workspace-select"
+              placeholder="Select workspace"
+              value={selectedWorkspace?.id}
+              onChange={onWorkspaceChange}
+              options={workspaces.map((workspace: Workspace) => ({
+                value: workspace.id,
+                label: workspace.name,
+              }))}
+            />
+            <Button onClick={() => navigate('/setup')}>New or join</Button>
           </Space>
           <Dropdown menu={userMenu} trigger={['click']}>
             <Button type="text" className="user-button">
@@ -278,7 +265,7 @@ const WorkspaceShell = () => {
           </Dropdown>
         </Header>
         <Content className="app-content">
-          {selectedWorkspace && emailVerified && (
+          {selectedWorkspace && (
             <Text type="secondary" className="workspace-kicker">
               {selectedWorkspace.name}
             </Text>

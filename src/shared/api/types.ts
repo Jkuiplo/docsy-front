@@ -1,6 +1,6 @@
 export type Role = 'OWNER' | 'ADMIN' | 'REVIEWER' | 'USER';
 export type DocumentStatus = 'DRAFT' | 'ON_REVIEW' | 'APPROVED' | 'ARCHIVED' | 'REJECTED';
-export type InvitationStatus = 'PENDING' | 'ACCEPTED' | 'EXPIRED' | 'REVOKED';
+export type InvitationStatus = 'PENDING' | 'ACCEPTED' | 'EXPIRED' | 'REVOKED' | 'DECLINED';
 export type JoinMode = 'INVITE_ONLY' | 'PASSWORD_AND_INVITE';
 export type Permission =
   | 'MANAGE_MEMBERS'
@@ -110,6 +110,11 @@ export interface Invitation {
   role: Role;
   status: InvitationStatus;
   expiresAt: string;
+  workspaceId?: string;
+  workspaceName?: string;
+  invitedById?: string;
+  invitedByEmail?: string;
+  invitedByName?: string;
 }
 
 export interface Member {

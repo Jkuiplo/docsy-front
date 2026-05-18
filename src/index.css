@@ -372,6 +372,25 @@ a {
   margin: 0 0 14px;
 }
 
+.setup-invitations {
+  margin-bottom: 16px;
+}
+
+.invitation-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface-muted);
+}
+
+.invitation-item h5 {
+  margin: 0 0 4px;
+}
+
 .app-layout {
   min-height: 100vh;
   background:

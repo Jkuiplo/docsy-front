@@ -7,14 +7,13 @@ import {
   TeamOutlined,
   UserOutlined,
 } from '@ant-design/icons';
-import { useMutation, useQueryClient } from '@tanstack/react-query';
+import { useMutation } from '@tanstack/react-query';
 import { Alert, Button, Card, Form, Input, Segmented, Space, Typography, message } from 'antd';
 import { useEffect } from 'react';
 import { Navigate, useNavigate, useSearchParams } from 'react-router-dom';
 import { ThemeModeControl } from '../../../app/theme';
 import { getApiErrorMessage } from '../../../shared/api/axios';
 import { authApi } from '../../../shared/api/docsy';
-import { acceptPendingInvitation, setPendingInvitationToken } from '../../../shared/invitations';
 import { useAuthStore } from '../store';
 
 const { Title, Text, Paragraph } = Typography;
@@ -39,43 +38,18 @@ export const AuthPage = () => {
   const [form] = Form.useForm<AuthFormValues>();
   const navigate = useNavigate();
   const [params] = useSearchParams();
-  const queryClient = useQueryClient();
   const token = useAuthStore((state) => state.token);
   const setSession = useAuthStore((state) => state.setSession);
   const mode = Form.useWatch('mode', form) as AuthMode | undefined;
   const currentMode = mode ?? 'login';
   const requestedMode = params.get('mode') === 'register' ? 'register' : 'login';
-  const invitationToken = params.get('invitationToken');
 
   useEffect(() => {
-    if (invitationToken) {
-      setPendingInvitationToken(invitationToken);
-      form.setFieldValue('mode', 'register');
-      return;
-    }
-
     form.setFieldValue('mode', requestedMode);
-  }, [form, invitationToken, requestedMode]);
+  }, [form, requestedMode]);
 
-  const afterAuth = async (response: Awaited<ReturnType<typeof authApi.login>>) => {
+  const afterAuth = (response: Awaited<ReturnType<typeof authApi.login>>) => {
     setSession(response.token, response.user);
-
-    if (!response.user.emailVerified) {
-      navigate('/verify-needed', { replace: true });
-      return;
-    }
-
-    try {
-      const acceptedInvitation = await acceptPendingInvitation();
-
-      if (acceptedInvitation) {
-        message.success('Invitation accepted');
-        queryClient.invalidateQueries({ queryKey: ['workspaces'] });
-      }
-    } catch (error) {
-      message.error(getApiErrorMessage(error));
-    }
-
     navigate('/', { replace: true });
   };
 
@@ -242,7 +216,7 @@ export const AuthPage = () => {
                       showIcon
                       type="info"
                       className="form-note"
-                      message="You may need to verify your email before using workspaces."
+                      message="Workspace invitations will appear inside your account after registration."
                     />
                   </div>
                 </div>
