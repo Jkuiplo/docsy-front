@@ -70,7 +70,10 @@ export const documentsApi = {
     data<DocumentItem[]>(apiClient.get(`/workspaces/${workspaceId}/documents`)),
   get: (workspaceId: string, documentId: string) =>
     data<DocumentItem>(apiClient.get(`/workspaces/${workspaceId}/documents/${documentId}`)),
-  create: (workspaceId: string, payload: { title: string; content: string; templateId?: string }) =>
+  create: (
+    workspaceId: string,
+    payload: { title: string; content: string; templateId?: string; placeholders?: Record<string, string> },
+  ) =>
     data<DocumentItem>(apiClient.post(`/workspaces/${workspaceId}/documents`, payload)),
   update: (workspaceId: string, documentId: string, payload: { title: string; content: string }) =>
     data<DocumentItem>(apiClient.patch(`/workspaces/${workspaceId}/documents/${documentId}`, payload)),

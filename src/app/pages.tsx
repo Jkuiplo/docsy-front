@@ -65,6 +65,7 @@ import { useAuthStore } from '../features/auth/store';
 import {
   allPermissions,
   canCreateDocuments,
+  canReviewDocuments,
   configurableRoles,
   hasPermission,
   useMyPermissions,
@@ -87,6 +88,7 @@ const statusTag = (status: DocumentStatus) => <Tag color={statusColors[status]}>
 
 const roleSelectOptions = roles.map((role) => ({ value: role, label: role }));
 const joinModeOptions = joinModes.map((joinMode) => ({ value: joinMode, label: joinMode.replace('_', ' ') }));
+const placeholderPattern = /{([A-Za-z][A-Za-z0-9_ -]*)}/g;
 
 const useWorkspaceId = () => {
   const { workspaceId } = useParams();
@@ -99,6 +101,23 @@ const useWorkspaceId = () => {
 };
 
 const notifyError = (error: unknown) => message.error(getApiErrorMessage(error));
+
+const getTemplatePlaceholders = (html: string) =>
+  Array.from(new Set(Array.from(html.matchAll(placeholderPattern), (match) => match[1].trim()).filter(Boolean)));
+
+const isBlankHtml = (html: string) => html.replace(/<[^>]*>/g, '').replace(/&nbsp;/g, '').trim().length === 0;
+
+const documentPreviewHtml = (document: DocumentItem) => {
+  if (!document.templateSnapshotHtml) {
+    return document.content;
+  }
+
+  if (!document.content || isBlankHtml(document.content)) {
+    return document.templateSnapshotHtml;
+  }
+
+  return `${document.templateSnapshotHtml}<div class="document-page-break"></div>${document.content}`;
+};
 
 export const HomeRedirect = () => {
   const selectedWorkspaceId = useWorkspaceStore((state) => state.selectedWorkspaceId);
@@ -192,6 +211,7 @@ export const WorkspaceSetupPage = () => {
 
 export const DashboardPage = () => {
   const workspaceId = useWorkspaceId();
+  const myPermissionsQuery = useMyPermissions(workspaceId);
   const dashboardQuery = useQuery({
     queryKey: ['workspaces', workspaceId, 'dashboard'],
     queryFn: () => workspacesApi.dashboard(workspaceId),
@@ -230,9 +250,11 @@ export const DashboardPage = () => {
         <Col xs={12} lg={4}>
           <Card><Statistic title="Rejected" value={dashboard.documentStats.rejected} /></Card>
         </Col>
-        <Col xs={12} lg={4}>
-          <Card><Statistic title="My reviews" value={dashboard.waitingForMyReview} /></Card>
-        </Col>
+        {canReviewDocuments(myPermissionsQuery.data) && (
+          <Col xs={12} lg={4}>
+            <Card><Statistic title="My reviews" value={dashboard.waitingForMyReview} /></Card>
+          </Col>
+        )}
         <Col xs={24} lg={8}>
           <Card title="Pending invitations">
             <Statistic value={dashboard.pendingInvitations} />
@@ -314,7 +336,7 @@ export const DocumentCreatePage = () => {
     enabled: hasPermission(myPermissionsQuery.data, 'CREATE_FROM_TEMPLATE'),
   });
   const createMutation = useMutation({
-    mutationFn: (values: { title: string; templateId?: string }) =>
+    mutationFn: (values: { title: string; templateId?: string; placeholders?: Record<string, string> }) =>
       documentsApi.create(workspaceId, { ...values, content }),
     onSuccess: (document) => {
       message.success('Document created');
@@ -504,7 +526,7 @@ export const DocumentDetailPage = () => {
             label: 'Preview',
             children: (
               <Card>
-                <div className="document-preview" dangerouslySetInnerHTML={{ __html: document.templateSnapshotHtml || document.content }} />
+                <div className="document-preview" dangerouslySetInnerHTML={{ __html: documentPreviewHtml(document) }} />
               </Card>
             ),
           },
@@ -583,33 +605,63 @@ const DocumentEditorForm = ({
   templatesLoading?: boolean;
   content: string;
   onContentChange: (value: string) => void;
-  onFinish: (values: { title: string; templateId?: string }) => void;
+  onFinish: (values: { title: string; templateId?: string; placeholders?: Record<string, string> }) => void;
   loading: boolean;
   submitLabel: string;
   includeTemplate?: boolean;
   disabled?: boolean;
-}) => (
-  <Form layout="vertical" initialValues={{ title: initialTitle }} onFinish={onFinish}>
-    <Form.Item name="title" label="Title" rules={[{ required: true }]}>
-      <Input disabled={disabled} />
-    </Form.Item>
-    {includeTemplate && (
-      <Form.Item name="templateId" label="Template">
-        <Select
-          allowClear
-          loading={templatesLoading}
-          options={(templates ?? []).map((template) => ({ value: template.id, label: template.title }))}
-        />
+}) => {
+  const [form] = Form.useForm();
+  const templateId = Form.useWatch('templateId', form);
+  const selectedTemplate = (templates ?? []).find((template) => template.id === templateId);
+  const placeholders = selectedTemplate ? getTemplatePlaceholders(selectedTemplate.htmlContent) : [];
+
+  return (
+    <Form form={form} layout="vertical" initialValues={{ title: initialTitle }} onFinish={onFinish}>
+      <Form.Item name="title" label="Title" rules={[{ required: true }]}>
+        <Input disabled={disabled} />
       </Form.Item>
-    )}
-    <Form.Item label="Content" required>
-      <ReactQuill readOnly={disabled} theme="snow" value={content} onChange={onContentChange} />
-    </Form.Item>
-    <Button type="primary" icon={<SaveOutlined />} htmlType="submit" loading={loading} disabled={disabled}>
-      {submitLabel}
-    </Button>
-  </Form>
-);
+      {includeTemplate && (
+        <>
+          <Alert
+            showIcon
+            type="info"
+            className="form-note"
+            message="Template placeholders use braces, for example {clientName}. Fill them after choosing a template."
+          />
+          <Form.Item name="templateId" label="Template">
+            <Select
+              allowClear
+              loading={templatesLoading}
+              options={(templates ?? []).map((template) => ({ value: template.id, label: template.title }))}
+            />
+          </Form.Item>
+          {placeholders.length > 0 && (
+            <div className="placeholder-panel form-note">
+              <Typography.Title level={5}>Template placeholders</Typography.Title>
+              {placeholders.map((placeholder) => (
+                <Form.Item
+                  key={placeholder}
+                  name={['placeholders', placeholder]}
+                  label={`{${placeholder}}`}
+                  rules={[{ required: true, message: `Fill {${placeholder}}` }]}
+                >
+                  <Input disabled={disabled} />
+                </Form.Item>
+              ))}
+            </div>
+          )}
+        </>
+      )}
+      <Form.Item label={includeTemplate ? 'Additional page content' : 'Content'} required={!includeTemplate}>
+        <ReactQuill readOnly={disabled} theme="snow" value={content} onChange={onContentChange} />
+      </Form.Item>
+      <Button type="primary" icon={<SaveOutlined />} htmlType="submit" loading={loading} disabled={disabled}>
+        {submitLabel}
+      </Button>
+    </Form>
+  );
+};
 
 const ActionModal = ({
   title,

@@ -56,6 +56,17 @@ a {
   margin-bottom: 18px;
 }
 
+.placeholder-panel {
+  padding: 16px;
+  border: 1px solid #e8ebf2;
+  border-radius: 6px;
+  background: #fbfcfe;
+}
+
+.placeholder-panel h5 {
+  margin: 0 0 14px;
+}
+
 .app-layout {
   min-height: 100vh;
 }
@@ -148,6 +159,11 @@ a {
   background: #ffffff;
   border: 1px solid #e8ebf2;
   border-radius: 6px;
+}
+
+.document-page-break {
+  margin: 28px 0;
+  border-top: 1px dashed #cfd5e3;
 }
 
 .settings-description {
