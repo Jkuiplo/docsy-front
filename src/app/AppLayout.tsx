@@ -20,22 +20,53 @@ import { authApi, workspacesApi } from '../shared/api/docsy';
 import type { Workspace } from '../shared/api/types';
 import { ErrorState, LoadingState } from '../shared/ui';
 import { useAuthStore } from '../features/auth/store';
+import {
+  canCreateDocuments,
+  canReviewDocuments,
+  canUseTemplates,
+  hasPermission,
+  useMyPermissions,
+} from './permissions';
 import { useWorkspaceStore } from './workspaceStore';
 
 const { Header, Sider, Content } = Layout;
 const { Text } = Typography;
 
-const workspaceMenuItems = (workspaceId: string): MenuProps['items'] => [
-  { key: `/workspaces/${workspaceId}`, icon: <DashboardOutlined />, label: 'Dashboard' },
-  { key: `/workspaces/${workspaceId}/documents`, icon: <FileTextOutlined />, label: 'Documents' },
-  { key: `/workspaces/${workspaceId}/templates`, icon: <ProfileOutlined />, label: 'Templates' },
-  { key: `/workspaces/${workspaceId}/review`, icon: <FileDoneOutlined />, label: 'Review queue' },
-  { key: `/workspaces/${workspaceId}/archive`, icon: <FolderOpenOutlined />, label: 'Archive' },
-  { key: `/workspaces/${workspaceId}/members`, icon: <TeamOutlined />, label: 'Members' },
-  { key: `/workspaces/${workspaceId}/permissions`, icon: <SettingOutlined />, label: 'Permissions' },
-  { key: `/workspaces/${workspaceId}/audit`, icon: <AuditOutlined />, label: 'Audit logs' },
-  { key: `/workspaces/${workspaceId}/settings`, icon: <SettingOutlined />, label: 'Workspace settings' },
-];
+const workspaceMenuItems = (
+  workspaceId: string,
+  access: ReturnType<typeof useMyPermissions>['data'],
+): MenuProps['items'] => {
+  const items: MenuProps['items'] = [
+    { key: `/workspaces/${workspaceId}`, icon: <DashboardOutlined />, label: 'Dashboard' },
+    { key: `/workspaces/${workspaceId}/documents`, icon: <FileTextOutlined />, label: 'Documents' },
+  ];
+
+  if (canUseTemplates(access)) {
+    items.push({ key: `/workspaces/${workspaceId}/templates`, icon: <ProfileOutlined />, label: 'Templates' });
+  }
+
+  if (canReviewDocuments(access)) {
+    items.push({ key: `/workspaces/${workspaceId}/review`, icon: <FileDoneOutlined />, label: 'Review queue' });
+  }
+
+  if (hasPermission(access, 'VIEW_ARCHIVE')) {
+    items.push({ key: `/workspaces/${workspaceId}/archive`, icon: <FolderOpenOutlined />, label: 'Archive' });
+  }
+
+  if (hasPermission(access, 'MANAGE_MEMBERS')) {
+    items.push({ key: `/workspaces/${workspaceId}/members`, icon: <TeamOutlined />, label: 'Members' });
+  }
+
+  if (hasPermission(access, 'MANAGE_WORKSPACE')) {
+    items.push(
+      { key: `/workspaces/${workspaceId}/permissions`, icon: <SettingOutlined />, label: 'Permissions' },
+      { key: `/workspaces/${workspaceId}/audit`, icon: <AuditOutlined />, label: 'Audit logs' },
+      { key: `/workspaces/${workspaceId}/settings`, icon: <SettingOutlined />, label: 'Workspace settings' },
+    );
+  }
+
+  return items;
+};
 
 export const ProtectedLayout = () => {
   const token = useAuthStore((state) => state.token);
@@ -95,6 +126,9 @@ const WorkspaceShell = () => {
     queryKey: ['workspaces', 'my'],
     queryFn: workspacesApi.mine,
   });
+  const workspaces = workspacesQuery.data ?? [];
+  const currentWorkspaceId = params.workspaceId ?? selectedWorkspaceId ?? workspaces[0]?.id;
+  const myPermissionsQuery = useMyPermissions(currentWorkspaceId);
 
   const logoutMutation = useMutation({
     mutationFn: async () => undefined,
@@ -113,9 +147,6 @@ const WorkspaceShell = () => {
     return <ErrorState error={workspacesQuery.error} onRetry={() => workspacesQuery.refetch()} />;
   }
 
-  const workspaces = workspacesQuery.data ?? [];
-  const currentWorkspaceId = params.workspaceId ?? selectedWorkspaceId ?? workspaces[0]?.id;
-
   if (location.pathname === '/' && workspaces.length > 0 && currentWorkspaceId) {
     return <Navigate to={`/workspaces/${currentWorkspaceId}`} replace />;
   }
@@ -125,7 +156,7 @@ const WorkspaceShell = () => {
   }
 
   const selectedWorkspace = workspaces.find((workspace) => workspace.id === currentWorkspaceId);
-  const menuItems = selectedWorkspace ? workspaceMenuItems(selectedWorkspace.id) : [];
+  const menuItems = selectedWorkspace ? workspaceMenuItems(selectedWorkspace.id, myPermissionsQuery.data) : [];
 
   const onWorkspaceChange = (workspaceId: string) => {
     setSelectedWorkspaceId(workspaceId);
@@ -199,7 +230,9 @@ const bestSelectedKey = (pathname: string, items: MenuProps['items']) => {
 
 export const WorkspaceRouteGuard = () => {
   const params = useParams();
+  const location = useLocation();
   const setSelectedWorkspaceId = useWorkspaceStore((state) => state.setSelectedWorkspaceId);
+  const myPermissionsQuery = useMyPermissions(params.workspaceId);
 
   useEffect(() => {
     if (params.workspaceId) {
@@ -207,7 +240,53 @@ export const WorkspaceRouteGuard = () => {
     }
   }, [params.workspaceId, setSelectedWorkspaceId]);
 
+  if (myPermissionsQuery.isLoading) {
+    return <LoadingState label="Checking workspace access" />;
+  }
+
+  if (!canAccessWorkspaceRoute(location.pathname, params.workspaceId, myPermissionsQuery.data)) {
+    return <Navigate to={`/workspaces/${params.workspaceId}`} replace />;
+  }
+
   return <Outlet />;
+};
+
+const canAccessWorkspaceRoute = (
+  pathname: string,
+  workspaceId: string | undefined,
+  access: ReturnType<typeof useMyPermissions>['data'],
+) => {
+  if (!workspaceId) {
+    return true;
+  }
+
+  const route = pathname.replace(`/workspaces/${workspaceId}`, '').replace(/^\/+/, '');
+
+  if (route === 'documents/new') {
+    return canCreateDocuments(access);
+  }
+
+  if (route === 'templates') {
+    return canUseTemplates(access);
+  }
+
+  if (route === 'review') {
+    return canReviewDocuments(access);
+  }
+
+  if (route === 'archive') {
+    return hasPermission(access, 'VIEW_ARCHIVE');
+  }
+
+  if (route === 'members') {
+    return hasPermission(access, 'MANAGE_MEMBERS');
+  }
+
+  if (['permissions', 'audit', 'settings'].includes(route)) {
+    return hasPermission(access, 'MANAGE_WORKSPACE');
+  }
+
+  return true;
 };
 
 export const MutationError = (error: unknown) => {

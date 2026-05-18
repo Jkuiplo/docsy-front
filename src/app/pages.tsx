@@ -62,18 +62,17 @@ import type {
 import { formatDate } from '../shared/format';
 import { EmptyState, ErrorState, InlineError, LoadingState, PageHeader } from '../shared/ui';
 import { useAuthStore } from '../features/auth/store';
+import {
+  allPermissions,
+  canCreateDocuments,
+  configurableRoles,
+  hasPermission,
+  useMyPermissions,
+} from './permissions';
 import { useWorkspaceStore } from './workspaceStore';
 
 const roles: Role[] = ['OWNER', 'ADMIN', 'REVIEWER', 'USER'];
 const joinModes: JoinMode[] = ['INVITE_ONLY', 'PASSWORD', 'OPEN'];
-const permissions: Permission[] = [
-  'MANAGE_MEMBERS',
-  'MANAGE_TEMPLATES',
-  'MANAGE_DOCUMENTS',
-  'REVIEW_DOCUMENTS',
-  'MANAGE_WORKSPACE',
-  'VIEW_AUDIT_LOGS',
-];
 const editableStatuses: DocumentStatus[] = ['DRAFT', 'REJECTED'];
 
 const statusColors: Record<DocumentStatus, string> = {
@@ -247,6 +246,7 @@ export const DashboardPage = () => {
 export const DocumentsPage = () => {
   const workspaceId = useWorkspaceId();
   const [status, setStatus] = useState<DocumentStatus | 'ALL'>('ALL');
+  const myPermissionsQuery = useMyPermissions(workspaceId);
   const documentsQuery = useQuery({
     queryKey: ['workspaces', workspaceId, 'documents'],
     queryFn: () => documentsApi.list(workspaceId),
@@ -274,7 +274,11 @@ export const DocumentsPage = () => {
       <PageHeader
         title="Documents"
         subtitle="Create, edit, and submit documents for review."
-        action={<Link to="new"><Button type="primary" icon={<FileAddOutlined />}>New document</Button></Link>}
+        action={
+          canCreateDocuments(myPermissionsQuery.data) ? (
+            <Link to="new"><Button type="primary" icon={<FileAddOutlined />}>New document</Button></Link>
+          ) : undefined
+        }
       />
       <Card>
         <Space className="table-toolbar">
@@ -303,9 +307,11 @@ export const DocumentCreatePage = () => {
   const workspaceId = useWorkspaceId();
   const navigate = useNavigate();
   const [content, setContent] = useState('');
+  const myPermissionsQuery = useMyPermissions(workspaceId);
   const templatesQuery = useQuery({
     queryKey: ['workspaces', workspaceId, 'templates'],
     queryFn: () => templatesApi.list(workspaceId),
+    enabled: hasPermission(myPermissionsQuery.data, 'CREATE_FROM_TEMPLATE'),
   });
   const createMutation = useMutation({
     mutationFn: (values: { title: string; templateId?: string }) =>
@@ -316,6 +322,14 @@ export const DocumentCreatePage = () => {
     },
     onError: notifyError,
   });
+
+  if (myPermissionsQuery.isLoading) {
+    return <LoadingState label="Checking document permissions" />;
+  }
+
+  if (!canCreateDocuments(myPermissionsQuery.data)) {
+    return <Navigate to="../documents" replace />;
+  }
 
   return (
     <>
@@ -329,7 +343,7 @@ export const DocumentCreatePage = () => {
           onFinish={(values) => createMutation.mutate(values)}
           loading={createMutation.isPending}
           submitLabel="Create document"
-          includeTemplate
+          includeTemplate={hasPermission(myPermissionsQuery.data, 'CREATE_FROM_TEMPLATE')}
         />
       </Card>
     </>
@@ -343,6 +357,8 @@ export const DocumentDetailPage = () => {
   const [submitOpen, setSubmitOpen] = useState(false);
   const [rejectOpen, setRejectOpen] = useState(false);
   const queryClient = useQueryClient();
+  const user = useAuthStore((state) => state.user);
+  const myPermissionsQuery = useMyPermissions(workspaceId);
 
   const documentQuery = useQuery({
     queryKey: ['workspaces', workspaceId, 'documents', documentId],
@@ -414,7 +430,15 @@ export const DocumentDetailPage = () => {
     return <EmptyState description="Document is not available" />;
   }
 
-  const canEdit = editableStatuses.includes(document.status);
+  const isAuthor = document.authorId === user?.id;
+  const isReviewer = document.reviewerId === user?.id;
+  const canEdit =
+    (editableStatuses.includes(document.status) && (isAuthor || hasPermission(myPermissionsQuery.data, 'EDIT_ALL_DOCUMENTS'))) ||
+    (document.status === 'ARCHIVED' && hasPermission(myPermissionsQuery.data, 'EDIT_ARCHIVED_DOCUMENTS'));
+  const canReview =
+    isReviewer || hasPermission(myPermissionsQuery.data, 'REVIEW_ASSIGNED_DOCUMENTS');
+  const canApprove =
+    canReview || (isAuthor && hasPermission(myPermissionsQuery.data, 'APPROVE_OWN_DOCUMENTS'));
 
   return (
     <>
@@ -457,16 +481,20 @@ export const DocumentDetailPage = () => {
                   >
                     Submit for review
                   </Button>
-                  <Button
-                    icon={<CheckCircleOutlined />}
-                    loading={approveMutation.isPending}
-                    onClick={() => approveMutation.mutate()}
-                  >
-                    Approve
-                  </Button>
-                  <Button danger onClick={() => setRejectOpen(true)}>
-                    Reject
-                  </Button>
+                  {canApprove && (
+                    <Button
+                      icon={<CheckCircleOutlined />}
+                      loading={approveMutation.isPending}
+                      onClick={() => approveMutation.mutate()}
+                    >
+                      Approve
+                    </Button>
+                  )}
+                  {canReview && (
+                    <Button danger onClick={() => setRejectOpen(true)}>
+                      Reject
+                    </Button>
+                  )}
                 </Space>
               </Card>
             ),
@@ -619,6 +647,7 @@ export const TemplatesPage = () => {
   const [htmlContent, setHtmlContent] = useState('');
   const [form] = Form.useForm();
   const queryClient = useQueryClient();
+  const myPermissionsQuery = useMyPermissions(workspaceId);
   const templatesQuery = useQuery({
     queryKey: ['workspaces', workspaceId, 'templates'],
     queryFn: () => templatesApi.list(workspaceId),
@@ -658,13 +687,18 @@ export const TemplatesPage = () => {
     form.setFieldsValue({ title: template?.title });
     setDrawerOpen(true);
   };
+  const canCreateTemplate = hasPermission(myPermissionsQuery.data, 'CREATE_TEMPLATES');
+  const canEditTemplate = hasPermission(myPermissionsQuery.data, 'EDIT_TEMPLATES');
+  const canDeleteTemplate = hasPermission(myPermissionsQuery.data, 'DELETE_TEMPLATES');
 
   return (
     <>
       <PageHeader
         title="Templates"
         subtitle="Reusable HTML shells for standardized documents."
-        action={<Button type="primary" icon={<PlusOutlined />} onClick={() => openEditor()}>New template</Button>}
+        action={canCreateTemplate ? (
+          <Button type="primary" icon={<PlusOutlined />} onClick={() => openEditor()}>New template</Button>
+        ) : undefined}
       />
       <Card>
         <Table
@@ -674,17 +708,19 @@ export const TemplatesPage = () => {
           columns={[
             { title: 'Title', dataIndex: 'title' },
             { title: 'Updated', dataIndex: 'updatedAt', render: formatDate },
-            {
+            ...(canEditTemplate || canDeleteTemplate ? [{
               title: 'Actions',
-              render: (_, template) => (
+              render: (_: unknown, template: Template) => (
                 <Space>
-                  <Button icon={<EditOutlined />} onClick={() => openEditor(template)} />
-                  <Popconfirm title="Delete template?" onConfirm={() => deleteMutation.mutate(template.id)}>
-                    <Button danger icon={<DeleteOutlined />} />
-                  </Popconfirm>
+                  {canEditTemplate && <Button icon={<EditOutlined />} onClick={() => openEditor(template)} />}
+                  {canDeleteTemplate && (
+                    <Popconfirm title="Delete template?" onConfirm={() => deleteMutation.mutate(template.id)}>
+                      <Button danger icon={<DeleteOutlined />} />
+                    </Popconfirm>
+                  )}
                 </Space>
               ),
-            },
+            }] : []),
           ]}
         />
       </Card>
@@ -895,7 +931,8 @@ export const PermissionsPage = () => {
 
   const rows = permissionsQuery.data ?? [];
   const enabled = (role: Role, permission: Permission) =>
-    rows.find((item: PermissionSetting) => item.role === role && item.permission === permission)?.enabled ?? false;
+    role === 'ADMIN' ||
+    (rows.find((item: PermissionSetting) => item.role === role && item.permission === permission)?.enabled ?? false);
 
   return (
     <>
@@ -905,16 +942,17 @@ export const PermissionsPage = () => {
         <Table
           rowKey="permission"
           loading={permissionsQuery.isLoading}
-          dataSource={permissions.map((permission) => ({ permission }))}
+          dataSource={allPermissions.map((permission) => ({ permission }))}
           pagination={false}
           columns={[
             { title: 'Permission', dataIndex: 'permission' },
-            ...roles.map((role) => ({
+            ...configurableRoles.map((role) => ({
               title: role,
               render: (row: { permission: Permission }) => (
                 <Switch
                   checked={enabled(role, row.permission)}
-                  loading={updateMutation.isPending}
+                  disabled={role === 'ADMIN'}
+                  loading={role !== 'ADMIN' && updateMutation.isPending}
                   onChange={(checked) => updateMutation.mutate({ role, permission: row.permission, enabled: checked })}
                 />
               ),
