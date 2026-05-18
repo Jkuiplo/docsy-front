@@ -7,10 +7,12 @@ import {
   PlusOutlined,
   SaveOutlined,
   SendOutlined,
+  UserOutlined,
 } from '@ant-design/icons';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   Alert,
+  Avatar,
   Button,
   Card,
   Col,
@@ -236,27 +238,27 @@ export const DashboardPage = () => {
       <PageHeader title="Dashboard" subtitle={`Your role: ${dashboard.myRole}`} />
       <Row gutter={[16, 16]}>
         <Col xs={12} lg={4}>
-          <Card><Statistic title="Draft" value={dashboard.documentStats.draft} /></Card>
+          <Card className="metric-card metric-draft"><Statistic title="Draft" value={dashboard.documentStats.draft} /></Card>
         </Col>
         <Col xs={12} lg={4}>
-          <Card><Statistic title="On review" value={dashboard.documentStats.onReview} /></Card>
+          <Card className="metric-card metric-review"><Statistic title="On review" value={dashboard.documentStats.onReview} /></Card>
         </Col>
         <Col xs={12} lg={4}>
-          <Card><Statistic title="Approved" value={dashboard.documentStats.approved} /></Card>
+          <Card className="metric-card metric-approved"><Statistic title="Approved" value={dashboard.documentStats.approved} /></Card>
         </Col>
         <Col xs={12} lg={4}>
-          <Card><Statistic title="Archived" value={dashboard.documentStats.archived} /></Card>
+          <Card className="metric-card metric-archived"><Statistic title="Archived" value={dashboard.documentStats.archived} /></Card>
         </Col>
         <Col xs={12} lg={4}>
-          <Card><Statistic title="Rejected" value={dashboard.documentStats.rejected} /></Card>
+          <Card className="metric-card metric-rejected"><Statistic title="Rejected" value={dashboard.documentStats.rejected} /></Card>
         </Col>
         {canReviewDocuments(myPermissionsQuery.data) && (
           <Col xs={12} lg={4}>
-            <Card><Statistic title="My reviews" value={dashboard.waitingForMyReview} /></Card>
+            <Card className="metric-card metric-personal"><Statistic title="My reviews" value={dashboard.waitingForMyReview} /></Card>
           </Col>
         )}
         <Col xs={24} lg={8}>
-          <Card title="Pending invitations">
+          <Card title="Pending invitations" className="metric-card metric-invitations">
             <Statistic value={dashboard.pendingInvitations} />
           </Card>
         </Col>
@@ -1136,6 +1138,17 @@ export const ProfilePage = () => {
   return (
     <>
       <PageHeader title="Profile" subtitle="Manage your account details." />
+      <Card className="profile-hero" bordered={false}>
+        <Space size={16} align="center">
+          <Avatar size={56} icon={<UserOutlined />} />
+          <div>
+            <Typography.Title level={3}>{profile?.fullName ?? 'Your profile'}</Typography.Title>
+            <Typography.Text type="secondary">
+              {profile?.positionTitle ?? 'Position title'} · {profile?.email ?? 'Email pending'}
+            </Typography.Text>
+          </div>
+        </Space>
+      </Card>
       <Row gutter={[16, 16]}>
         <Col xs={24} lg={12}>
           <Card title="Account">
@@ -1181,7 +1194,6 @@ export const ProfilePage = () => {
 
 export const VerifyNeededPage = () => {
   const user = useAuthStore((state) => state.user);
-  const logout = useAuthStore((state) => state.logout);
   const resendMutation = useMutation({
     mutationFn: () => authApi.resendVerification(user?.email ?? ''),
     onSuccess: () => message.success('Verification email sent'),
@@ -1189,20 +1201,27 @@ export const VerifyNeededPage = () => {
   });
 
   return (
-    <main className="auth-page">
-      <Card className="auth-panel" bordered={false}>
+    <div className="verify-shell">
+      <Card className="verify-card" bordered={false}>
         <Space direction="vertical" size={20} className="full-width">
-          <Typography.Title level={2}>Verify your email</Typography.Title>
-          <Typography.Text type="secondary">
-            Check {user?.email ?? 'your inbox'} for a verification link before continuing.
-          </Typography.Text>
+          <div className="verify-icon"><MailOutlined /></div>
+          <div>
+            <Typography.Title level={2}>Verify your email</Typography.Title>
+            <Typography.Text type="secondary">
+              Check {user?.email ?? 'your inbox'} for a verification link before continuing into workspaces.
+            </Typography.Text>
+          </div>
+          <Alert
+            showIcon
+            type="info"
+            message="The account menu stays available here for profile, theme, and log out controls."
+          />
           <Button type="primary" loading={resendMutation.isPending} onClick={() => resendMutation.mutate()}>
             Resend verification email
           </Button>
-          <Button onClick={logout}>Log out</Button>
         </Space>
       </Card>
-    </main>
+    </div>
   );
 };
 

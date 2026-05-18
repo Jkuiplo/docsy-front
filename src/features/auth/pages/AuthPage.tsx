@@ -1,12 +1,21 @@
-import { LockOutlined, MailOutlined, TeamOutlined, UserOutlined } from '@ant-design/icons';
+import {
+  AuditOutlined,
+  CheckCircleOutlined,
+  FileDoneOutlined,
+  LockOutlined,
+  MailOutlined,
+  TeamOutlined,
+  UserOutlined,
+} from '@ant-design/icons';
 import { useMutation } from '@tanstack/react-query';
 import { Alert, Button, Card, Form, Input, Segmented, Space, Typography, message } from 'antd';
 import { Navigate, useNavigate } from 'react-router-dom';
+import { ThemeModeControl } from '../../../app/theme';
 import { getApiErrorMessage } from '../../../shared/api/axios';
 import { authApi } from '../../../shared/api/docsy';
 import { useAuthStore } from '../store';
 
-const { Title, Text } = Typography;
+const { Title, Text, Paragraph } = Typography;
 
 type AuthMode = 'login' | 'register';
 
@@ -66,87 +75,144 @@ export const AuthPage = () => {
 
   return (
     <main className="auth-page">
-      <Card className="auth-panel" bordered={false}>
-        <Space direction="vertical" size={24} className="full-width">
-          <div>
-            <Title level={1}>Docsy</Title>
-            <Text type="secondary">Document workflows for teams that need review discipline.</Text>
+      <div className="auth-theme-switch">
+        <ThemeModeControl />
+      </div>
+      <section className="auth-shell">
+        <aside className="auth-showcase" aria-label="Docsy workflow preview">
+          <div className="auth-brand-lockup">
+            <span className="brand-mark">D</span>
+            <span>Docsy</span>
           </div>
+          <div>
+            <Title level={1}>Review-ready documents, from draft to archive.</Title>
+            <Paragraph>
+              Keep templates, authors, reviewers, permissions, and audit history moving in one focused workspace.
+            </Paragraph>
+          </div>
+          <div className="workflow-preview">
+            <div className="workflow-card active">
+              <FileDoneOutlined />
+              <div>
+                <strong>Policy update</strong>
+                <span>Waiting for review</span>
+              </div>
+            </div>
+            <div className="workflow-card">
+              <AuditOutlined />
+              <div>
+                <strong>Approval log</strong>
+                <span>3 tracked decisions</span>
+              </div>
+            </div>
+            <div className="workflow-card complete">
+              <CheckCircleOutlined />
+              <div>
+                <strong>Signed archive</strong>
+                <span>Ready for retrieval</span>
+              </div>
+            </div>
+          </div>
+          <div className="auth-metrics">
+            <span><strong>24</strong> drafts governed</span>
+            <span><strong>8</strong> reviews today</span>
+            <span><strong>100%</strong> traceable</span>
+          </div>
+        </aside>
 
-          <Form
-            form={form}
-            layout="vertical"
-            requiredMark={false}
-            initialValues={{ mode: 'login' }}
-            onFinish={onFinish}
-          >
-            <Form.Item name="mode">
-              <Segmented
+        <Card className="auth-panel" bordered={false}>
+          <Space direction="vertical" size={24} className="full-width">
+            <div>
+              <Text className="auth-eyebrow">Workspace access</Text>
+              <Title level={2}>{currentMode === 'login' ? 'Welcome back' : 'Create your Docsy account'}</Title>
+              <Text type="secondary">
+                {currentMode === 'login'
+                  ? 'Sign in to continue managing document workflows.'
+                  : 'Start with your identity so reviews and ownership stay clear.'}
+              </Text>
+            </div>
+
+            <Form
+              form={form}
+              layout="vertical"
+              requiredMark={false}
+              initialValues={{ mode: 'login' }}
+              onFinish={onFinish}
+            >
+              <Form.Item name="mode">
+                <Segmented
+                  block
+                  options={[
+                    { label: 'Sign in', value: 'login' },
+                    { label: 'Create account', value: 'register' },
+                  ]}
+                />
+              </Form.Item>
+
+              <div className="auth-form-fields" key={currentMode}>
+                <Form.Item
+                  label="Email"
+                  name="email"
+                  rules={[{ required: true, type: 'email', message: 'Enter a valid email' }]}
+                >
+                  <Input size="large" prefix={<MailOutlined />} autoComplete="email" />
+                </Form.Item>
+
+                {currentMode === 'register' && (
+                  <>
+                    <Form.Item
+                      label="Full name"
+                      name="fullName"
+                      rules={[{ required: true, message: 'Enter your full name' }]}
+                    >
+                      <Input size="large" prefix={<UserOutlined />} autoComplete="name" />
+                    </Form.Item>
+
+                    <Form.Item
+                      label="Position title"
+                      name="positionTitle"
+                      rules={[{ required: true, message: 'Enter your position title' }]}
+                    >
+                      <Input size="large" prefix={<TeamOutlined />} autoComplete="organization-title" />
+                    </Form.Item>
+                  </>
+                )}
+
+                <Form.Item
+                  label="Password"
+                  name="password"
+                  rules={[{ required: true, min: 6, message: 'Password must be at least 6 characters' }]}
+                >
+                  <Input.Password
+                    size="large"
+                    prefix={<LockOutlined />}
+                    autoComplete={currentMode === 'login' ? 'current-password' : 'new-password'}
+                  />
+                </Form.Item>
+
+                {currentMode === 'register' && (
+                  <Alert
+                    showIcon
+                    type="info"
+                    className="form-note"
+                    message="You may need to verify your email before using workspaces."
+                  />
+                )}
+              </div>
+
+              <Button
                 block
-                options={[
-                  { label: 'Sign in', value: 'login' },
-                  { label: 'Create account', value: 'register' },
-                ]}
-              />
-            </Form.Item>
-
-            <Form.Item
-              label="Email"
-              name="email"
-              rules={[{ required: true, type: 'email', message: 'Enter a valid email' }]}
-            >
-              <Input size="large" prefix={<MailOutlined />} autoComplete="email" />
-            </Form.Item>
-
-            {currentMode === 'register' && (
-              <>
-                <Form.Item
-                  label="Full name"
-                  name="fullName"
-                  rules={[{ required: true, message: 'Enter your full name' }]}
-                >
-                  <Input size="large" prefix={<UserOutlined />} autoComplete="name" />
-                </Form.Item>
-
-                <Form.Item
-                  label="Position title"
-                  name="positionTitle"
-                  rules={[{ required: true, message: 'Enter your position title' }]}
-                >
-                  <Input size="large" prefix={<TeamOutlined />} />
-                </Form.Item>
-              </>
-            )}
-
-            <Form.Item
-              label="Password"
-              name="password"
-              rules={[{ required: true, min: 6, message: 'Password must be at least 6 characters' }]}
-            >
-              <Input.Password size="large" prefix={<LockOutlined />} autoComplete="current-password" />
-            </Form.Item>
-
-            {currentMode === 'register' && (
-              <Alert
-                showIcon
-                type="info"
-                className="form-note"
-                message="You may need to verify your email before using workspaces."
-              />
-            )}
-
-            <Button
-              block
-              type="primary"
-              htmlType="submit"
-              size="large"
-              loading={loginMutation.isPending || registerMutation.isPending}
-            >
-              {currentMode === 'login' ? 'Sign in' : 'Create account'}
-            </Button>
-          </Form>
-        </Space>
-      </Card>
+                type="primary"
+                htmlType="submit"
+                size="large"
+                loading={loginMutation.isPending || registerMutation.isPending}
+              >
+                {currentMode === 'login' ? 'Sign in' : 'Create account'}
+              </Button>
+            </Form>
+          </Space>
+        </Card>
+      </section>
     </main>
   );
 };

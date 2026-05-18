@@ -5,6 +5,8 @@ import {
   FileTextOutlined,
   FolderOpenOutlined,
   LogoutOutlined,
+  MenuFoldOutlined,
+  MenuUnfoldOutlined,
   ProfileOutlined,
   SettingOutlined,
   TeamOutlined,
@@ -13,13 +15,14 @@ import {
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Avatar, Button, Dropdown, Layout, Menu, Select, Space, Typography, message } from 'antd';
 import type { MenuProps } from 'antd';
-import { useEffect } from 'react';
+import { useEffect, useState } from 'react';
 import { Navigate, Outlet, useLocation, useNavigate, useParams } from 'react-router-dom';
 import { getApiErrorMessage } from '../shared/api/axios';
 import { authApi, workspacesApi } from '../shared/api/docsy';
 import type { Workspace } from '../shared/api/types';
 import { ErrorState, LoadingState } from '../shared/ui';
 import { useAuthStore } from '../features/auth/store';
+import { ThemeModeControl } from './theme';
 import {
   canCreateDocuments,
   canReviewDocuments,
@@ -31,6 +34,7 @@ import { useWorkspaceStore } from './workspaceStore';
 
 const { Header, Sider, Content } = Layout;
 const { Text } = Typography;
+const sidebarStorageKey = 'docsySidebarCollapsed';
 
 const workspaceMenuItems = (
   workspaceId: string,
@@ -105,10 +109,6 @@ export const ProtectedLayout = () => {
     return <Navigate to="/auth" replace />;
   }
 
-  if (meQuery.data && !meQuery.data.emailVerified) {
-    return <Navigate to="/verify-needed" replace />;
-  }
-
   return <WorkspaceShell />;
 };
 
@@ -119,12 +119,20 @@ const WorkspaceShell = () => {
   const queryClient = useQueryClient();
   const user = useAuthStore((state) => state.user);
   const logout = useAuthStore((state) => state.logout);
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(
+    () => localStorage.getItem(sidebarStorageKey) === 'true',
+  );
+  const [isMobile, setIsMobile] = useState(false);
   const selectedWorkspaceId = useWorkspaceStore((state) => state.selectedWorkspaceId);
   const setSelectedWorkspaceId = useWorkspaceStore((state) => state.setSelectedWorkspaceId);
+  const isVerifyRoute = location.pathname === '/verify-needed';
+  const isProfileRoute = location.pathname === '/profile';
+  const emailVerified = user?.emailVerified ?? false;
 
   const workspacesQuery = useQuery({
     queryKey: ['workspaces', 'my'],
     queryFn: workspacesApi.mine,
+    enabled: emailVerified,
   });
   const workspaces = workspacesQuery.data ?? [];
   const currentWorkspaceId = params.workspaceId ?? selectedWorkspaceId ?? workspaces[0]?.id;
@@ -139,24 +147,37 @@ const WorkspaceShell = () => {
     },
   });
 
-  if (workspacesQuery.isLoading) {
+  useEffect(() => {
+    localStorage.setItem(sidebarStorageKey, String(sidebarCollapsed));
+  }, [sidebarCollapsed]);
+
+  if (!emailVerified && !isVerifyRoute && !isProfileRoute) {
+    return <Navigate to="/verify-needed" replace />;
+  }
+
+  if (emailVerified && isVerifyRoute) {
+    return <Navigate to="/" replace />;
+  }
+
+  if (emailVerified && workspacesQuery.isLoading) {
     return <LoadingState label="Loading workspaces" />;
   }
 
-  if (workspacesQuery.isError) {
+  if (emailVerified && workspacesQuery.isError) {
     return <ErrorState error={workspacesQuery.error} onRetry={() => workspacesQuery.refetch()} />;
   }
 
-  if (location.pathname === '/' && workspaces.length > 0 && currentWorkspaceId) {
+  if (emailVerified && location.pathname === '/' && workspaces.length > 0 && currentWorkspaceId) {
     return <Navigate to={`/workspaces/${currentWorkspaceId}`} replace />;
   }
 
-  if (location.pathname === '/' && workspaces.length === 0) {
+  if (emailVerified && location.pathname === '/' && workspaces.length === 0) {
     return <Navigate to="/setup" replace />;
   }
 
   const selectedWorkspace = workspaces.find((workspace) => workspace.id === currentWorkspaceId);
   const menuItems = selectedWorkspace ? workspaceMenuItems(selectedWorkspace.id, myPermissionsQuery.data) : [];
+  const showSidebar = emailVerified;
 
   const onWorkspaceChange = (workspaceId: string) => {
     setSelectedWorkspaceId(workspaceId);
@@ -166,9 +187,23 @@ const WorkspaceShell = () => {
   const userMenu: MenuProps = {
     items: [
       { key: '/profile', icon: <UserOutlined />, label: 'Profile' },
+      {
+        key: 'theme',
+        label: (
+          <div className="account-menu-control">
+            <span>Theme</span>
+            <ThemeModeControl className="account-theme-control" />
+          </div>
+        ),
+      },
       { key: 'logout', icon: <LogoutOutlined />, label: 'Log out' },
     ],
-    onClick: ({ key }) => {
+    onClick: ({ key, domEvent }) => {
+      if (key === 'theme') {
+        domEvent.stopPropagation();
+        return;
+      }
+
       if (key === 'logout') {
         logoutMutation.mutate();
       } else {
@@ -179,29 +214,61 @@ const WorkspaceShell = () => {
 
   return (
     <Layout className="app-layout">
-      <Sider breakpoint="lg" collapsedWidth="0" width={250} className="app-sider">
-        <div className="brand">Docsy</div>
-        <Menu
-          mode="inline"
-          selectedKeys={[bestSelectedKey(location.pathname, menuItems)]}
-          items={menuItems}
-          onClick={({ key }) => navigate(String(key))}
-        />
-      </Sider>
+      {showSidebar && (
+        <Sider
+          breakpoint="lg"
+          collapsed={sidebarCollapsed}
+          collapsedWidth={isMobile ? 0 : 72}
+          onBreakpoint={setIsMobile}
+          trigger={null}
+          width={268}
+          className="app-sider"
+        >
+          <div className="brand">
+            <span className="brand-mark">D</span>
+            <span className="brand-name">Docsy</span>
+          </div>
+          <Menu
+            mode="inline"
+            selectedKeys={[bestSelectedKey(location.pathname, menuItems)]}
+            items={menuItems}
+            onClick={({ key }) => {
+              navigate(String(key));
+              if (isMobile) {
+                setSidebarCollapsed(true);
+              }
+            }}
+          />
+        </Sider>
+      )}
       <Layout>
         <Header className="app-header">
-          <Space size={12}>
-            <Select
-              className="workspace-select"
-              placeholder="Select workspace"
-              value={selectedWorkspace?.id}
-              onChange={onWorkspaceChange}
-              options={workspaces.map((workspace: Workspace) => ({
-                value: workspace.id,
-                label: workspace.name,
-              }))}
-            />
-            <Button onClick={() => navigate('/setup')}>New or join</Button>
+          <Space size={12} className="app-header-main">
+            {showSidebar && (
+              <Button
+                type="text"
+                className="sidebar-toggle"
+                icon={sidebarCollapsed ? <MenuUnfoldOutlined /> : <MenuFoldOutlined />}
+                aria-label={sidebarCollapsed ? 'Open sidebar' : 'Close sidebar'}
+                onClick={() => setSidebarCollapsed((collapsed) => !collapsed)}
+              />
+            )}
+            {emailVerified && (
+              <>
+                <Select
+                  className="workspace-select"
+                  placeholder="Select workspace"
+                  value={selectedWorkspace?.id}
+                  onChange={onWorkspaceChange}
+                  options={workspaces.map((workspace: Workspace) => ({
+                    value: workspace.id,
+                    label: workspace.name,
+                  }))}
+                />
+                <Button onClick={() => navigate('/setup')}>New or join</Button>
+              </>
+            )}
+            {!emailVerified && <Text strong>Finish setting up your account</Text>}
           </Space>
           <Dropdown menu={userMenu} trigger={['click']}>
             <Button type="text" className="user-button">
@@ -211,7 +278,7 @@ const WorkspaceShell = () => {
           </Dropdown>
         </Header>
         <Content className="app-content">
-          {selectedWorkspace && (
+          {selectedWorkspace && emailVerified && (
             <Text type="secondary" className="workspace-kicker">
               {selectedWorkspace.name}
             </Text>

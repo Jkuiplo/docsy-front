@@ -35,14 +35,11 @@ export const router = createBrowserRouter([
     element: <AcceptInvitationPage />,
   },
   {
-    path: '/verify-needed',
-    element: <VerifyNeededPage />,
-  },
-  {
     path: '/',
     element: <ProtectedLayout />,
     children: [
       { index: true, element: <HomeRedirect /> },
+      { path: 'verify-needed', element: <VerifyNeededPage /> },
       { path: 'setup', element: <WorkspaceSetupPage /> },
       { path: 'profile', element: <ProfilePage /> },
       {

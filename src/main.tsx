@@ -1,8 +1,9 @@
 import React from 'react';
 import ReactDOM from 'react-dom/client';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { ConfigProvider, App as AntApp } from 'antd';
+import { App as AntApp } from 'antd';
 import { RouterProvider } from 'react-router-dom';
+import { AppThemeProvider } from './app/theme';
 import { router } from './app/router';
 import './index.css';
 
@@ -17,20 +18,12 @@ const queryClient = new QueryClient({
 
 ReactDOM.createRoot(document.getElementById('root')!).render(
   <React.StrictMode>
-    <ConfigProvider
-      theme={{
-        token: {
-          colorPrimary: '#2454d6',
-          borderRadius: 6,
-          fontFamily: "Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif",
-        },
-      }}
-    >
+    <AppThemeProvider>
       <AntApp>
         <QueryClientProvider client={queryClient}>
           <RouterProvider router={router} />
         </QueryClientProvider>
       </AntApp>
-    </ConfigProvider>
+    </AppThemeProvider>
   </React.StrictMode>,
 );
